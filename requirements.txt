@@ -1,0 +1,7 @@
+colorzero==2.0
+datatypes==0.29.0
+endpoints==9.1.0
+gpiozero==2.0.1
+pigpio==1.78
+python-dotenv==1.2.1
+setuptools==80.9.0
