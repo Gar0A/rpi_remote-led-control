@@ -1,24 +1,32 @@
 import os
+import asyncio
+import threading
 
 from dotenv import load_dotenv
 from endpoints import Controller
 from gpiozero import LED
 from gpiozero.pins.pigpio import PiGPIOFactory
+from time import sleep
 
 load_dotenv()
+
+# Event used to manage the preset thread
+stop_event = asyncio.Event()
+running_thread = None
 
 # Makes the connection to the pigpio of the remote raspberry pi
 factory = PiGPIOFactory(os.getenv("PIGPIO_ADDR"), os.getenv("PIGPIO_PORT"))
 
 # List of all LEDs pins (BCM pinout)
-leds = [4, 17, 27, 22, 5, 6, 13, 19, 26, 21]
+led_pins = [4, 17, 27, 22, 5, 6, 13, 19, 26, 21]
 
 # Instantiation of all LEDs
 factory_leds = []
-for led in leds:
+for led in led_pins:
     led = LED(led, pin_factory=factory)
     led.off()
     factory_leds.append(led)
+
 
 class Default(Controller):
     """`Default` handles / requests"""
@@ -35,13 +43,14 @@ class Default(Controller):
 
         index = int(params.get("index"))
 
-        if 0 > index >= len(leds):
+        if 0 > index >= len(factory_leds):
             return "No LED found"
 
         selectedled = factory_leds[int(params.get("index"))]
         selectedled.toggle()
 
         return "LED on" if selectedled.value else "LED off"
+
 
 class Off(Controller):
     """handles /off requests"""
@@ -50,15 +59,74 @@ class Off(Controller):
         """
         Turns all the LEDs off
         """
-        list(map(lambda x: x.off(), factory_leds))
+        # Stops any running preset
+        stop_event.set()
+
+        # Turn all LEDs off
+        for led in factory_leds:
+            led.off()
+
         return "LEDs off"
+
 
 class On(Controller):
     """handles /on requests"""
 
-    async def GET(self):
+    async def GET(self, **params):
         """
         Turns all the LEDs on
         """
-        list(map(lambda x: x.on(), factory_leds))
-        return "LEDs on"
+        global running_thread
+
+        # Stop any prior running thread and wait for it to finish
+        if running_thread and running_thread.is_alive():
+            stop_event.set()
+            running_thread.join()
+
+        stop_event.clear()
+        if params.get("mode") is None:
+            for led in factory_leds:
+                led.on()
+            return "LEDs on"
+        else:
+            # Runs a thread with the selected preset
+            running_thread = threading.Thread(
+                target=preset_runner,
+                args=(stop_event, factory_leds, params["mode"]),
+                daemon=True  # Ensures the thread dies if the main program exits
+            )
+            running_thread.start()
+
+        return "LEDs animation started in background thread"
+
+
+def preset_runner(event, leds, mode):
+    """This runs in a separate thread, independent of the web server"""
+    print("Thread started")
+    try:
+        # Turn all LEDs off
+        for led in leds:
+            led.off()
+
+        if mode == "trailing":
+
+            while not event.is_set():
+                for led in leds:
+                    if event.is_set():
+                        break
+                    led.toggle()
+                    sleep(0.5)
+
+        elif mode == "blinking":
+
+            while not event.is_set():
+                for led in leds:
+                    if event.is_set():
+                        break
+                    led.toggle()
+
+    finally:
+        # Turn all LEDs off
+        for led in leds:
+            led.off()
+        print("Cleaning up and exiting thread")
