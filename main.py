@@ -3,7 +3,7 @@ import asyncio
 import threading
 
 from dotenv import load_dotenv
-from endpoints import Controller
+from endpoints import Controller, CallError
 from gpiozero import LED
 from gpiozero.pins.pigpio import PiGPIOFactory
 from time import sleep
@@ -31,33 +31,129 @@ for led in led_pins:
 class Default(Controller):
     """`Default` handles / requests"""
 
-    async def GET(self, **params):
+    async def GET(self):
         """
-        Turns an individual LED on/off \n
-        The parameter `index` must be passed \n
-        example : \n
-        ``url/?index=1`` (turns on/off the LED with index 1 in ``factory_leds``)
+        Renders the web interface for remote LED control.
+        Provides a selection for presets or a custom manual control mode using checkboxes
         """
-        if params.get("index") is None or not params.get("index").isdigit():
-            return "No index provided"
+        # Generate checkbox HTML based on current LED states
+        checkboxes_html = ""
+        for i, led in enumerate(factory_leds):
+            checked = "checked" if led.is_active else ""
+            checkboxes_html += f"""
+                            <label class="flex items-center space-x-3 p-3 bg-gray-100 rounded-lg cursor-pointer hover:bg-gray-200 transition">
+                                <input type="checkbox" class="led-checkbox w-5 h-5" data-index="{i}" {checked}>
+                                <span class="text-gray-700 font-medium">LED {i} (Pin {led_pins[i]})</span>
+                            </label>
+                            """
 
-        index = int(params.get("index"))
+        return f"""
+            <!DOCTYPE html>
+            <html lang="en">
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>Remote LED Control</title>
+                <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+              </head>
+              <body class="bg-gray-50 min-h-screen flex items-center justify-center p-4">
+                <main class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
+                    <h1 class="text-2xl font-bold text-gray-800 mb-6 text-center">Remote LED Control</h1>
+    
+                    <div class="mb-6">
+                        <label class="block text-sm font-semibold text-gray-600 mb-2">Control Mode</label>
+                        <select id="modeSelect" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                            <option value="custom">Custom (Manual Control)</option>
+                            <option value="trailing">Preset: Trailing</option>
+                            <option value="blinking">Preset: Blinking</option>
+                            <option value="pong">Preset: Pong</option>
+                            <option value="pingpong">Preset: Ping-Pong</option>
+                            <option value="off">All Off</option>
+                        </select>
+                    </div>
+    
+                    <div id="customControls" class="flex flex-col gap-3">
+                        <p class="text-sm text-gray-500 mb-2">Manual Toggle:</p>
+                        {checkboxes_html}
+                    </div>
+                </main>
+    
+                <script>
+                    const modeSelect = document.getElementById('modeSelect');
+                    const customControls = document.getElementById('customControls');
+                    const checkboxes = document.querySelectorAll('.led-checkbox');
+    
+                    // Utility to make POST requests
+                    async function sendCommand(url, data = {{}}) {{
+                        const formData = new URLSearchParams();
+                        for (const key in data) formData.append(key, data[key]);
+    
+                        return fetch(url, {{
+                            method: 'POST',
+                            body: formData
+                        }});
+                    }}
+    
+                    // Handle Mode Changes
+                    modeSelect.addEventListener('change', async (e) => {{
+                        const mode = e.target.value;
+    
+                        if (mode === 'custom') {{
+                            // Stop animations and show checkboxes
+                            await sendCommand('/off');
+                            customControls.classList.remove('hidden');
+                            checkboxes.forEach(cb => cb.checked = false);
+                        }} else if (mode === 'off') {{
+                            await sendCommand('/off');
+                            customControls.classList.add('hidden');
+                        }} else {{
+                            // Hide checkboxes and start preset
+                            customControls.classList.add('hidden');
+                            await sendCommand('/on', {{ mode: mode }});
+                        }}
+                    }});
+    
+                    // Handle Individual Checkbox Toggles
+                    checkboxes.forEach(checkbox => {{
+                        checkbox.addEventListener('change', async (e) => {{
+                            const index = e.target.dataset.index;
+                            await sendCommand('/', {{ index: index }});
+                        }});
+                    }});
+                </script>
+              </body>
+            </html>
+        """
 
-        if 0 > index >= len(factory_leds):
-            return "No LED found"
+    async def POST(self, **kwargs):
+        """
+        Toggles an individual LED on/off
 
-        selectedled = factory_leds[int(params.get("index"))]
-        selectedled.toggle()
+        Args:
+            **kwargs: Arbitrary keyword arguments.
+                ``index`` (str/int) The index of the LED in `factory_leds` to toggle
 
-        return "LED on" if selectedled.value else "LED off"
+        Returns:
+            str: "OK" if successful
+
+        Raises:
+            CallError: 422 if index is missing, not a digit or out of range
+        """
+        # Handle the logic for toggling via AJAX if an index is provided
+        if kwargs.get("index") is not None and kwargs.get("index").isdigit():
+            index = int(kwargs.get("index"))
+            if 0 <= index < len(factory_leds):
+                factory_leds[index].toggle()
+            return "OK"
+        raise CallError(422, "Missing or invalid LED index")
 
 
 class Off(Controller):
     """handles /off requests"""
 
-    async def GET(self):
+    async def POST(self):
         """
-        Turns all the LEDs off
+        Stops any active preset animation thread and turns all LEDs off
         """
         # Stops any running preset
         stop_event.set()
@@ -72,11 +168,27 @@ class Off(Controller):
 class On(Controller):
     """handles /on requests"""
 
-    async def GET(self, **params):
+    async def POST(self, **kwargs):
         """
-        Turns all the LEDs on
+        Turns all LEDs on or starts a background preset animation thread
+
+        Args:
+            **kwargs: Arbitrary keyword arguments.
+                ``index`` (str): The index of the LED in `factory_leds` to toggle
+
+        Returns:
+            str: Success message indicating either LEDs are on or animation started
+
+        Raises:
+            CallError: 422 if an invalid mode is provided
         """
         global running_thread
+        mode = kwargs.get("mode")
+
+        # Validate the preset mode if one is provided
+        valid_modes = ["trailing", "blinking", "pong", "pingpong"]
+        if mode and mode not in valid_modes:
+            raise CallError(422, f"Invalid preset mode: {mode}")
 
         # Stop any prior running thread and wait for it to finish
         if running_thread and running_thread.is_alive():
@@ -84,7 +196,7 @@ class On(Controller):
             running_thread.join()
 
         stop_event.clear()
-        if params.get("mode") is None:
+        if mode is None:
             for led in factory_leds:
                 led.on()
             return "LEDs on"
@@ -92,7 +204,7 @@ class On(Controller):
             # Runs a thread with the selected preset
             running_thread = threading.Thread(
                 target=preset_runner,
-                args=(stop_event, factory_leds, params["mode"]),
+                args=(stop_event, factory_leds, mode),
                 daemon=True  # Ensures the thread dies if the main program exits
             )
             running_thread.start()
@@ -101,7 +213,7 @@ class On(Controller):
 
 
 def preset_runner(event, leds, mode):
-    """This runs in a separate thread, independent of the web server"""
+    """This runs in a separate thread (for the presets), independent of the web server"""
     print("Thread started")
     try:
         # Turn all LEDs off

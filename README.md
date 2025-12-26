@@ -17,7 +17,8 @@ The purpose of this project is to learn more about the use of **GPIO** on a Rasp
 1. Copy the .env.example and fill it with your environment variables
 2. After cloning the repository, run `python -m venv .venv` and `pip install -r requirements.txt` to set up the environment
 3. The web server used to toggle the LED is ready to serve : `endpoints --prefix=main --host=localhost:8000`
-4. You can now make a request to `localhost:8000` to control the LEDs
-   1. Toggle a single LED : `/?index={LED_index}`
-   2. Turn all LEDs off : `/off`
-   3. Turn all LEDs on : `/on`
+4. You can now access the web interface at `localhost:8000`  or make a POST request to `localhost:8000` to control the LEDs
+   1. Toggle a single LED : `/` with the argument `index` (in the body of the request) with the index of the LED (ex : `curl -X POST -d "index=0" http://localhost:8000/`)
+   2. Turn all LEDs off : `/off` (ex : `curl -X POST http://localhost:8000/off`)
+   3. Turn all LEDs on : `/on` (ex : `curl -X POST http://localhost:8000/on`)
+      1. You can pass the argument `mode` (in the body of the request) with one of the following : `trailing`, `blinking`, `pong` or `pingpong` (ex : `curl -X POST -d "mode=blinking" http://localhost:8000/on`)
