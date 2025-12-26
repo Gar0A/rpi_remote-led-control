@@ -125,6 +125,61 @@ def preset_runner(event, leds, mode):
                         break
                     led.toggle()
 
+        elif mode == "pong":
+            # Setup for mode
+            index = 0
+            back = False
+            leds[index].on()
+
+            while not event.is_set():
+                sleep(0.5)
+                # Checks if it needs to change direction (next index is out of range)
+                if not back and index + 1 >= len(leds):
+                    back = True
+                elif back and index - 1 < 0:
+                    back = False
+
+                # Turns off the last LED and turns on the next one (depending on the direction: +/-)
+                leds[index].off()
+
+                if not back:
+                    index += 1
+                else:
+                    index -= 1
+
+                leds[index].on()
+
+        elif mode == "pingpong":
+            # Setup for mode
+            index = 0
+            index2 = len(leds) - 1
+            back = False
+            leds[index].on()
+            leds[index2].on()
+
+            while not event.is_set():
+                sleep(0.5)
+                # Checks if it needs to change direction (index is out of range or is at the middle of the list)
+                if not back and index + 1 >= len(leds) / 2:
+                    back = True
+                elif back and index - 1 < 0:
+                    back = False
+
+                # Turns off the last LED on the right and on the left and turns on the next one (depending on the direction: +/-)
+                leds[index].off()
+                leds[index2].off()
+
+                if not back:
+                    index += 1
+                    index2 -= 1
+                else:
+                    index -= 1
+                    index2 += 1
+
+                leds[index].on()
+                leds[index2].on()
+
+
     finally:
         # Turn all LEDs off
         for led in leds:
